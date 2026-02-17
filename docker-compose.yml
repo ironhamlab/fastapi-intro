@@ -1,0 +1,10 @@
+services:
+  demo-app:
+    build: .
+    volumes:
+      - .dockervenv:/src/.venv
+      - .:/src
+    ports:
+      - 8000:8000 # 호스트 머신의 8000번 모트를 docker의 8000번 포트에 연결.
+    environment:
+      - WATCHFILES_FORCE_POLLING=true # 환경에 따라 핫 리로드를 위해 필요함.
