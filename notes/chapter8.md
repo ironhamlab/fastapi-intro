@@ -40,8 +40,61 @@ ToDo 앱을 만들기 위해 라우터에 다음과 같은 6가지 경로 동작
 
 에 작성함.
 
+
+<br />
+
+**api/routers/task.py**
+```python
+from fastapi import APIRouter
+
+
+router = APIRouter()
+
+
+@router.get("/tasks")
+async def list_tasks():
+    pass
+
+
+@router.post("/tasks")
+async def create_task():
+    pass
+
+
+@router.put("/tasks/{task_id}")
+async def update_task():
+    pass
+
+
+@router.delete("/tasks/{task_id}")
+async def delete_task():
+    pass
+```
+
+<br />
+
+**api/routers/done.py**
+```python
+from fastapi import APIRouter
+
+
+router = APIRouter()
+
+
+@router.put("/tasks/{task_id}/done")
+async def mark_task_as_done():
+    pass
+
+
+@router.delete("/tasks/{task_id}/done")
+async def unmark_task_as_done():
+    pass
+```
+
+
 ※ 작성 시, pass 는 '아무것도 하지 않는 문장'을 의미함. 일반적으로 함수는 return 문으로 값을 반환한 뒤 종료하지만, 아무것도 반환하지 않는 함수의 경우 return을 쓸 필요는 없음. 하지만 파이썬은 들여쓰기에 엄격하므로, 아무것도 처리하지 않는 함수를 그대로 두면 함수의 내용을 찾을 수 없어 들여쓰기 오류가 발생함. 그래서 이후에 내용을 구현할 예정임을 쉽게 알 수 있도록 pass 라고 써 두고 넘어가는 것임.
 
+<br />
 <br />
 
 **task.py** 와 **done.py** 1차 작성으로, routers의 플레이스홀더(Placeholder) 준비는 끝났음. 
