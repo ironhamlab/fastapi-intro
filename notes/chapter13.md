@@ -60,7 +60,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 
 - DB_URL = "mysql+pymysql://root@db:3306/demo?charset=utf8"  # 1
-+ ASYNC_DB_URL = "mysql+pymysql://root@db:3306/demo?charset=utf8"  # 1
++ ASYNC_DB_URL = "mysql+aiomysql://root@db:3306/demo?charset=utf8"  # 1
 
 - db_engine = create_engine(DB_URL, echo=True)  # 2
 - db_session = sessionmaker(autocommit=False, autoflush=False, bind=db_engine)
@@ -94,19 +94,225 @@ Base = declarative_base()
 
 
 <br />
-
-**api/db.py**
-```python
-```
-
-**api/db.py**
-```python
-```
-
-<br />
 <br />
 
 ---
 
 ### 04. 비동기 대응 CRUDs
 
+앞 장에서 준비한 CRUDs 를 재작성함. api/cruds, api/routers 모두 다시 작성해야 함.
+
+<br />
+
+> ### C: Create
+
+**api/cruds/task.py**
+```python
+from sqlalchemy import select
+from sqlalchemy.engine import Result
+from sqlalchemy.orm import Session
++ from sqlalchemy.ext.asyncio import AsyncSession
+
+...
+
+
+- def create_task(db: Session, task_create:task_schema.TaskCreate) -> task_model.Task:
++ async def create_task(
++     db: AsyncSession, task_create: task_schema.TaskCreate
++ ) -> task_model.Task:
+    task = task_model.Task(**task_create.dict())
+    db.add(task)
+-   db.commit()
+-   db.refresh(task)
++   await db.commit()
++   await db.refresh(task)
+    return task
+```
+
+<br />
+
+변경된 사항은 함수 정의가 async def 로 변경된 점, db.commit() 과 db.refresh(Task) 에 await 가 붙은 점임. async def 는 함수가 비동기 처리를 할 수 있는 코루틴(coroutine) 함수(이하 코루틴)임을 나타냄.
+
+여기서 await 는 DB 접속(IO 처리)이 발생하므로, '대기 시간이 발생하는 처리를 할게요'라고 비동기 처리를 알리는 역할을 함. 이를 통해 파이썬은 이 코루틴의 처리에서 일단 벗어나, 이벤트 루프 내에서 다른 코루틴의 처리를 수행할 수 있게 됨. 이것이 비동기/병렬 처리의 핵심임.
+
+<br />
+
+---
+
+※ 코루틴이란?
+
+코루틴은 서브루틴(코루틴이 아닌 일반 함수)의 일반형임. def 에 대해 async def 이므로 오히려 특수형이라고 생각할 수 있음. 일반 함수는 동기 처리만 가능하지만, 코루틴은 동기 처리와 비동기 처리를 모두 할 수 있으므로 일반형임.
+
+---
+
+<br />
+
+앞에서 준비한 CRUD 정의 create_task 를 이용하는 라우터는 다음처럼 다시 작성할 수 있음.
+
+<br />
+
+**api/routers/task.py**
+```python
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
++ from sqlalchemy.ext.asyncio import AsyncSession
+
+...
+
+
+- async def create_task(task_body: task_schema.TaskCreate, db: Session = Depends(get_db)):
+-     return task_crud.create_task(db, task_body)
++ async def create_task(
++     task_body: task_schema.TaskCreate, db: AsyncSession = Depends(get_db)
++     ):
++     return await task_crud.create_task(db, task_body)
+```
+
+<br />
+
+라우터의 경로 동작 함수는 원래부터 코루틴으로 정의되어 있었음. task_crud.create_task() 가 await 를 포함하는 코루틴이므로, create_task() 의 반환값도 await 를 사용하여 돌려줌.
+
+여기서 await 를 지정하는 것을 잊어버리면 어떻게 될까?
+
+async def 로 정의된 코루틴은 동기 처리도 가능하다고 설명했음. 따라서 파이썬은 문법 오류가 발생하지 않음. 하지만 POST /tasks 엔드포인트에서 'Execute'를 하면 task_model.Task 대신 coroutine 자체를 응답으로 반환하려고 하므로, response 에 id 필드가 없어서 응답 스키마의 결함으로 다음과 같은 오류가 발생함
+
+```
+pydantic.error_wrappers.ValidationError: 1 validation error for TaskCreateResponse
+response -> id
+  field required(type=value_error.missing)
+```
+
+<br />
+
+마찬가지로 이 router 정의에서 await 를 넣었더라도, 반대로 task_crud.create_task(db, task_body) 에서 db.commit() 과 db.refresh() 에 await 를 붙이지 않으면, DB 의 반환을 기다리지 않고 task_class.model.Task 클래스를 반환하려고 함. 그때 DB 호출 시 발급받아야 할 id 가 아직 할당되지 않아 오류가 발생하므로 주의해야 함.
+
+<br />
+<br />
+
+> ### R: Read
+
+Create 이외의 CRUDs 에 대해서도 동일하게 cruds 와 routers 의 각 파일을 변경함.
+
+**api/cruds/task.py**
+```python
+- def get_tasks_with_done(db: Session) -> list[tuple[int, str, bool]]:
++ async def get_tasks_with_done(db: AsyncSession) -> list[tuple[int, str, bool]]:
+-     result: Result = db.execute(
++     result: Result = await db.execute(
+```
+
+get_tasks_with_done() 함수 역시 create_task() 함수와 마찬가지로 코루틴이므로 async def 로 정의하고, await 를 사용하여 Result 를 가져옴.
+
+
+**api/routers/task.py**
+```python
+@router.get("/tasks", response_model=list[task_schema.Task])
+- async def list_tasks(db: Session = Depends(get_db)):
++ async def list_tasks(db: AsyncSession = Depends(get_db)):
+-     return task_crud.get_tasks_with_done(db)
++     return await task_crud.get_tasks_with_done(db)
+```
+
+<br />
+<br />
+
+> ### U: Update
+
+**api/cruds/task.py**
+```python
+- def get_task(db: Session, task_id: int) -> task_model.Task | None:
++ async def get_task(db: AsyncSession, task_id: int) -> task_model.Task | None:
+-     result: Result = db.execute(
++     result: Result = await db.execute(
+
+...
+
+
+- def update_task(
+-     db: Session, task_create: task_schema.TaskCreate, original:task_model.Task
++ async def update_task(
++     db: AsyncSession, task_create: task_schema.TaskCreate, original:task_model.Task
+) -> task_model.Task:
+    original.title = task_create.title
+    db.add(original)
+-   db.commit()
+-   db.refresh(original)
++   await db.commit()
++   await db.refresh(original)
+    return original
+```
+
+<br />
+
+**api/routers/task.py**
+```python
+@router.put("/tasks/{task_id}", response_model=task_schema.TaskCreateResponse)
+async def update_task(
+-   task_id: int, task_body: task_schema.TaskCreate, db: Session = Depends(get_db)
++   task_id: int, task_body: task_schema.TaskCreate, db: AsyncSession = Depends(get_db)
+    ):
+-   task = task_crud.get_task(db, task_id=task_id)
++   task = await task_crud.get_task(db, task_id=task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+-   return task_crud.update_task(db, task_body, original=task)
++   return await task_crud.update_task(db, task_body, original=task)
+```
+
+<br />
+<br />
+
+> ### D: Delete
+
+**api/cruds/task.py**
+```python
+- from sqlalchemy.orm import Session
+
+...
+
+
+- def delete_task(db: Session, original: task_model.Task) -> None:
+-     db.delete(original)
+-     db.commit()
++ async def delete_task(db: AsyncSession, original: task_model.Task) -> None:
++     await db.delete(original)
++     await db.commit()
+```
+
+<br />
+
+**api/routers/task.py**
+```python
+- from sqlalchemy.orm import Session
+
+
+@router.delete("/tasks/{task_id}", response_model=None)
+- async def delete_task(task_id: int, db: Session = Depends(get_db)):
+-   task = task_crud.get_task(db, task_id=task_id)
++ async def delete_task(task_id: int, db: AsyncSession = Depends(get_db)):
+-   task = await task_crud.get_task(db, task_id=task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+-   return task_crud.delete_task(db, original=task)
++   return await task_crud.delete_task(db, original=task)
+```
+
+<br />
+<br />
+
+> ### Done 리소스
+
+**api/cruds/done.py** 와 **api/routers/done.py** 도 다시 작성함.
+
+
+<br />
+<br />
+
+마지막으로, 변경한 모든 엔드포인트에 대해 오류 없이 변경 전의 응답을 얻을 수 있는지 Swagger UI 로 동작을 확인해 둠.
+
+다음 장에서는 이 장에서 비동기화한 코드를 기반으로 유닛 테스트를 작성함.
+
+<br />
+<br />
